@@ -1,0 +1,13 @@
+{
+  "employees": [
+    "employee1@company.com",
+    "employee2@company.com",
+    "employee3@company.com"
+  ],
+  "admins": [
+    "admin1@company.com",
+    "admin2@company.com"
+  ],
+  "support": "support@company.com",
+  "contact": "contact@company.com"
+}
