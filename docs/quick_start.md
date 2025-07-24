@@ -29,19 +29,49 @@ cp .env.example .env
 
 # Edit .env and add your API key
 HIBP_API_KEY=your_actual_api_key_here
+
+# Rate limiting configuration (optional)
+HIBP_HOURLY_LIMIT=100        # Maximum 100 requests per hour
+HIBP_REQUEST_DELAY=1.6       # 1.6 seconds pause between requests
 ```
 
 #### Method 2: Environment Variable
 ```bash
 export HIBP_API_KEY="your_actual_api_key_here"
+export HIBP_HOURLY_LIMIT=100
+export HIBP_REQUEST_DELAY=1.6
 ```
 
 #### Method 3: Command Line Parameter
 ```bash
-python dark_web_checker.py --api-key your_api_key_here -e email@example.com -o results.json
+python dark_web_checker.py --api-key your_api_key_here --hourly-limit 50 --request-delay 2.0 -e email@example.com -o results.json
 ```
 
-### Step 3: Run Your First Check
+### Step 3: Rate Limiting Configuration (Optional)
+
+The application includes a rate limiting system to respect Have I Been Pwned API limits:
+
+**Configurable parameters:**
+- **HIBP_HOURLY_LIMIT**: Maximum requests per hour (default: 100)
+- **HIBP_REQUEST_DELAY**: Delay between requests in seconds (default: 1.6)
+
+**Configuration via .env:**
+```bash
+HIBP_HOURLY_LIMIT=50         # Reduce to 50 requests per hour
+HIBP_REQUEST_DELAY=2.0       # Increase delay to 2 seconds
+```
+
+**Configuration via command line:**
+```bash
+python dark_web_checker.py --hourly-limit 50 --request-delay 2.0 -f emails.txt -o results.json
+```
+
+**Notes:**
+- Hourly rate limiting tracks requests made in the last hour
+- If you reach the hourly limit, the application will wait automatically
+- Higher delay reduces load on HIBP servers but slows execution
+
+### Step 4: Run Your First Check
 ```bash
 # Check a single email
 python dark_web_checker.py -e your.email@example.com -o results.json

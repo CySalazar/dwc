@@ -13,6 +13,7 @@ import time
 import argparse
 import logging
 import re
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import requests
@@ -35,20 +36,28 @@ logger = logging.getLogger(__name__)
 class DarkWebChecker:
     """Main class for checking email addresses against data breaches."""
     
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, hourly_limit: int = 100, request_delay: float = 1.6):
         """
         Initialize the Dark Web Checker.
         
         Args:
             api_key (str): Have I Been Pwned API key
+            hourly_limit (int): Maximum requests per hour (default: 100)
+            request_delay (float): Delay between requests in seconds (default: 1.6)
         """
         self.api_key = api_key
         self.base_url = "https://haveibeenpwned.com/api/v3"
+        self.hourly_limit = hourly_limit
+        self.request_delay = request_delay
+        self.request_history = []  # Track request timestamps
+        
         self.session = requests.Session()
         self.session.headers.update({
             'hibp-api-key': self.api_key,
             'User-Agent': 'DarkWebChecker/1.0'
         })
+        
+        logger.info(f"Initialized with hourly limit: {hourly_limit} requests/hour, delay: {request_delay}s")
         
     def display_banner(self):
         """Display the application banner."""
@@ -83,6 +92,41 @@ class DarkWebChecker:
         print("🔍 Checking email addresses for data breaches...")
         print("⚠️  Remember: This tool is for legitimate security purposes only!\n")
 
+    def _clean_old_requests(self):
+        """Remove request timestamps older than 1 hour."""
+        one_hour_ago = datetime.now() - timedelta(hours=1)
+        self.request_history = [
+            timestamp for timestamp in self.request_history 
+            if timestamp > one_hour_ago
+        ]
+
+    def _check_rate_limit(self) -> bool:
+        """
+        Check if we can make another request within the hourly limit.
+        
+        Returns:
+            bool: True if request is allowed, False if rate limit exceeded
+        """
+        self._clean_old_requests()
+        return len(self.request_history) < self.hourly_limit
+
+    def _wait_for_rate_limit(self):
+        """Wait until we can make another request within the hourly limit."""
+        while not self._check_rate_limit():
+            self._clean_old_requests()
+            oldest_request = min(self.request_history) if self.request_history else datetime.now()
+            wait_until = oldest_request + timedelta(hours=1)
+            wait_seconds = (wait_until - datetime.now()).total_seconds()
+            
+            if wait_seconds > 0:
+                logger.warning(f"Hourly rate limit ({self.hourly_limit}) reached. Waiting {wait_seconds:.0f} seconds...")
+                print(f"⏳ Rate limit reached. Waiting {wait_seconds:.0f} seconds until next request...")
+                time.sleep(min(wait_seconds, 60))  # Wait in chunks of max 60 seconds
+
+    def _record_request(self):
+        """Record the timestamp of a request."""
+        self.request_history.append(datetime.now())
+
     def check_email_breach(self, email: str) -> Dict[str, Any]:
         """
         Check if an email address has been involved in data breaches.
@@ -94,10 +138,17 @@ class DarkWebChecker:
             Dict[str, Any]: Breach information or error details
         """
         try:
+            # Check and wait for rate limit
+            self._wait_for_rate_limit()
+            
             url = f"{self.base_url}/breachedaccount/{email}"
             params = {'truncateResponse': 'false'}
             
-            logger.info(f"Checking email: {email}")
+            logger.info(f"Checking email: {email} (Requests this hour: {len(self.request_history)})")
+            
+            # Record the request
+            self._record_request()
+            
             response = self.session.get(url, params=params, timeout=30)
             
             if response.status_code == 200:
@@ -120,8 +171,8 @@ class DarkWebChecker:
                     'checked_at': time.strftime('%Y-%m-%d %H:%M:%S')
                 }
             elif response.status_code == 429:
-                logger.warning(f"Rate limit exceeded. Waiting...")
-                time.sleep(6)  # Wait 6 seconds for rate limit
+                logger.warning(f"Rate limit exceeded by API. Waiting...")
+                time.sleep(6)  # Wait 6 seconds for API rate limit
                 return self.check_email_breach(email)  # Retry
             else:
                 error_msg = f"API error {response.status_code}: {response.text}"
@@ -295,7 +346,8 @@ def main():
 Examples:
   python dark_web_checker.py -f emails.txt -o results.json
   python dark_web_checker.py -e user@example.com -o results.csv
-  python dark_web_checker.py --file emails.csv --output results.txt
+  python dark_web_checker.py --file emails.csv --output results.txt --hourly-limit 50
+  python dark_web_checker.py -f emails.txt -o results.json --request-delay 2.0
         """
     )
     
@@ -304,15 +356,26 @@ Examples:
     parser.add_argument('-o', '--output', type=str, help='Output file for results (txt, csv, json)')
     parser.add_argument('--api-key', type=str, help='Have I Been Pwned API key')
     parser.add_argument('-v', '--verbose', action='store_true', help='Enable verbose logging')
+    parser.add_argument('--hourly-limit', type=int, default=100, 
+                       help='Maximum requests per hour (default: 100)')
+    parser.add_argument('--request-delay', type=float, default=1.6,
+                       help='Delay between requests in seconds (default: 1.6)')
     
     args = parser.parse_args()
     
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
     
+    # Get rate limiting configuration from environment or use defaults
+    hourly_limit = int(os.getenv('HIBP_HOURLY_LIMIT', args.hourly_limit))
+    request_delay = float(os.getenv('HIBP_REQUEST_DELAY', args.request_delay))
+    
     # Initialize checker
-    checker = DarkWebChecker("")
+    checker = DarkWebChecker("", hourly_limit=hourly_limit, request_delay=request_delay)
     checker.display_banner()
+    
+    # Display rate limiting info
+    print(f"⚙️  Rate limiting: {hourly_limit} requests/hour, {request_delay}s delay between requests\n")
     
     # Get API key
     api_key = args.api_key or get_api_key()
@@ -374,9 +437,9 @@ Examples:
         result = checker.check_email_breach(email)
         results.append(result)
         
-        # Rate limiting - HIBP allows 1 request per 1.5 seconds
+        # Apply request delay between emails (except for the last one)
         if i < len(emails):
-            time.sleep(1.6)
+            time.sleep(checker.request_delay)
     
     # Save results
     checker.save_results(results, output_file)
