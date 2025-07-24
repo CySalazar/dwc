@@ -63,3 +63,8 @@ breach_report.*
 # Test files
 test_results/
 temp/
+
+# Sample files
+sample_emails.csv
+sample_emails.json
+sample_emails.txt
